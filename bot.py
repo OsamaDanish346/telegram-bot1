@@ -11,6 +11,7 @@ CHANNELS = ["@afghan_reward", "@khanda_koor", "@nice_image1"]
 conn = sqlite3.connect("bot.db", check_same_thread=False)
 cursor = conn.cursor()
 
+# ================= DATABASE =================
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS users(
     id INTEGER PRIMARY KEY,
@@ -64,16 +65,16 @@ async def check_force_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return True
 
     user_id = update.effective_user.id
-
     for ch in CHANNELS:
         try:
             member = await context.bot.get_chat_member(ch, user_id)
             if member.status not in ["member", "administrator", "creator"]:
                 link = await context.bot.create_chat_invite_link(ch)
-                await update.message.reply_text(f"⚠️ لومړی چینل ته جوائن شئ:\n{link.invite_link}")
+                await update.message.reply_text(f"⚠️ لومړی چینل جوائن کړئ:\n{link.invite_link}")
                 return False
-        except:
-            pass
+        except Exception as e:
+            print("Force join error:", e)
+            return True
 
     return True
 
@@ -87,7 +88,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await check_force_join(update, context):
         return
 
-    await update.message.reply_text("✨ ښه راغلاست!", reply_markup=main_keyboard())
+    await update.message.reply_text(
+        "✨ ښه راغلاست!",
+        reply_markup=main_keyboard()
+    )
 
 # ================= STATUS =================
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -96,12 +100,12 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cursor.execute("SELECT balance FROM users WHERE id=?", (user.id,))
     balance = (cursor.fetchone() or [0])[0]
 
-    await update.message.reply_text(f"""
-🤵🏻‍♂️ استعمالوونکی = {user.first_name}
+    text = f"""👤 {user.first_name}
 
-💳 ایډي کارن : {user.id}
-💵 ستاسو پيسو اندازه = {balance:.1f} AFN
-""")
+🆔 {user.id}
+💰 {balance:.1f} AFN
+"""
+    await update.message.reply_text(text, reply_markup=main_keyboard())
 
 # ================= BONUS =================
 async def daily_bonus(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -112,12 +116,15 @@ async def daily_bonus(update: Update, context: ContextTypes.DEFAULT_TYPE):
     row = cursor.fetchone() or [0, None]
 
     if row[1] == today:
-        await update.message.reply_text("❌ نن مو بونس اخیستی")
-    else:
-        new_balance = row[0] + 0.5
-        cursor.execute("UPDATE users SET balance=?, last_daily_bonus=? WHERE id=?", (new_balance, today, uid))
-        conn.commit()
-        await update.message.reply_text("✅ 0.5 افغانۍ اضافه شوه")
+        await update.message.reply_text("❌ نن مو اخیستی", reply_markup=bonus_keyboard())
+        return
+
+    new_balance = row[0] + 0.5
+    cursor.execute("UPDATE users SET balance=?, last_daily_bonus=? WHERE id=?",
+                   (new_balance, today, uid))
+    conn.commit()
+
+    await update.message.reply_text("✅ +0.5 AFN", reply_markup=bonus_keyboard())
 
 async def weekly_bonus(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
@@ -126,40 +133,70 @@ async def weekly_bonus(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cursor.execute("SELECT balance, last_weekly_bonus FROM users WHERE id=?", (uid,))
     row = cursor.fetchone() or [0, None]
 
-    if row[1] and (now - datetime.datetime.strptime(row[1], "%Y-%m-%d")).days < 7:
-        await update.message.reply_text("❌ لا وخت نه دی پوره شوی")
-    else:
-        new_balance = row[0] + 5
-        cursor.execute("UPDATE users SET balance=?, last_weekly_bonus=? WHERE id=?", (new_balance, now.strftime("%Y-%m-%d"), uid))
-        conn.commit()
-        await update.message.reply_text("✅ 5 افغانۍ اضافه شوه")
+    if row[1]:
+        last = datetime.datetime.strptime(row[1], "%Y-%m-%d")
+        if (now - last).days < 7:
+            await update.message.reply_text("❌ لا وخت نه دی", reply_markup=bonus_keyboard())
+            return
+
+    new_balance = row[0] + 5
+    today = now.strftime("%Y-%m-%d")
+
+    cursor.execute("UPDATE users SET balance=?, last_weekly_bonus=? WHERE id=?",
+                   (new_balance, today, uid))
+    conn.commit()
+
+    await update.message.reply_text("🎉 +5 AFN", reply_markup=bonus_keyboard())
 
 # ================= REFERRAL =================
 async def referral(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    link = f"https://t.me/AfghanRewardBot?start={uid}"
+    bot_username = "Afghan_Reward_bot"
 
-    await update.message.reply_text(f"🔗 ستاسو لینک:\n{link}")
+    link = f"https://t.me/{bot_username}?start={uid}"
+
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📋 لینک کاپي کړئ", url=link)]
+    ])
+
+    await update.message.reply_text(
+        f"🔗 ستاسو لینک:\n{link}",
+        reply_markup=keyboard,
+        disable_web_page_preview=True
+    )
+
+# ================= PHONE =================
+async def save_phone(update: Update, context: ContextTypes.DEFAULT_TYPE, text):
+    uid = update.effective_user.id
+
+    if not text.isdigit() or len(text) != 10:
+        await update.message.reply_text("❌ 10 رقمي نمبر ولیکه", reply_markup=main_keyboard())
+        return
+
+    cursor.execute("UPDATE users SET phone=? WHERE id=?", (text, uid))
+    conn.commit()
+
+    await update.message.reply_text("✅ ثبت شو", reply_markup=main_keyboard())
 
 # ================= WITHDRAW =================
 async def withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
 
     cursor.execute("SELECT balance, phone FROM users WHERE id=?", (uid,))
-    row = cursor.fetchone() or [0, None]
+    row = cursor.fetchone() or (0, None)
 
     if not row[1]:
-        await update.message.reply_text("📱 لومړی نمبر داخل کړئ")
+        await update.message.reply_text("📞 لومړی نمبر ورکړه", reply_markup=main_keyboard())
         return
 
     if row[0] < 50:
-        await update.message.reply_text("⚠️ لږ تر لږه ۵۰ افغانۍ پکار دي")
+        await update.message.reply_text("❌ لږ تر لږه 50 AFN", reply_markup=main_keyboard())
         return
 
-    await update.message.reply_text("💸 مقدار ولیکئ:")
     context.user_data["withdraw"] = True
+    await update.message.reply_text("💸 مقدار ولیکه:")
 
-# ================= MESSAGE =================
+# ================= MESSAGE HANDLER =================
 async def msg_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     uid = update.effective_user.id
@@ -167,22 +204,24 @@ async def msg_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await check_force_join(update, context):
         return
 
-    # withdraw amount
     if context.user_data.get("withdraw"):
         if text.replace('.', '', 1).isdigit():
             amount = float(text)
 
             cursor.execute("SELECT balance, phone FROM users WHERE id=?", (uid,))
-            bal, phone = cursor.fetchone()
+            balance, phone = cursor.fetchone()
 
-            if amount < 50 or amount > bal:
-                await update.message.reply_text("❌ مقدار غلط دی")
+            if amount < 50 or amount > balance:
+                await update.message.reply_text("❌ غلط مقدار")
             else:
-                cursor.execute("UPDATE users SET balance=? WHERE id=?", (bal - amount, uid))
+                cursor.execute("INSERT INTO withdrawals(user_id, amount, phone, date) VALUES(?,?,?,?)",
+                               (uid, amount, phone, str(datetime.datetime.now())))
+                cursor.execute("UPDATE users SET balance=balance-? WHERE id=?", (amount, uid))
                 conn.commit()
-                await update.message.reply_text("✅ درخواست ثبت شو")
 
-            context.user_data["withdraw"] = False
+                await update.message.reply_text("✅ ویډرا ثبت شو", reply_markup=main_keyboard())
+
+        context.user_data["withdraw"] = False
         return
 
     if text == "📊 حالت":
@@ -204,27 +243,26 @@ async def msg_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await referral(update, context)
 
     elif text == "📞 نمبر داخلول":
-        await update.message.reply_text("📱 خپل ۱۰ رقمي نمبر ولیکئ:")
+        await update.message.reply_text("📱 خپل 10 رقمي نمبر ولیکه:")
 
     elif text == "💸 ویډرا":
         await withdraw(update, context)
 
     elif text == "🔙 بیرته":
-        await start(update, context)
+        await update.message.reply_text("اصلي مینو", reply_markup=main_keyboard())
 
-    elif text.isdigit() and len(text) == 10:
-        cursor.execute("UPDATE users SET phone=? WHERE id=?", (text, uid))
-        conn.commit()
-        await update.message.reply_text("✅ نمبر ثبت شو")
+    elif text == "ℹ️ د ربات په اړه":
+        await update.message.reply_text("دا ریوارډ بوټ دی", reply_markup=main_keyboard())
 
     elif text.isdigit():
-        await update.message.reply_text("❌ نمبر باید ۱۰ رقمه وي")
+        await save_phone(update, context, text)
 
 # ================= RUN =================
-app = Application.builder().token(TOKEN).build()
+if __name__ == "__main__":
+    app = Application.builder().token(TOKEN).build()
 
-app.add_handler(CommandHandler("start", start))
-app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, msg_handler))
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, msg_handler))
 
-print("Bot Running...")
-app.run_polling()
+    print("✅ RUNNING...")
+    app.run_polling()
