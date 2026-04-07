@@ -1,24 +1,38 @@
 import sqlite3
 import datetime
-from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram import (
+    Update, ReplyKeyboardMarkup, InlineKeyboardMarkup, InlineKeyboardButton
+)
+from telegram.ext import (
+    Application, CommandHandler, MessageHandler, filters, ContextTypes
+)
 
 TOKEN = "8778331918:AAE5uzWflufC_AkLDz62m4A80BsbIZoZtvI"
 ADMIN_ID = 8289491009
-BOT_USERNAME = "Afghan_Reward_bot"
-
-CHANNELS = ["@afghan_reward"]
 
 # ================= DATABASE =================
 conn = sqlite3.connect("bot.db", check_same_thread=False)
 cursor = conn.cursor()
 
-cursor.execute("CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY, balance REAL DEFAULT 0, phone TEXT, last_daily TEXT, last_weekly TEXT)")
-cursor.execute("CREATE TABLE IF NOT EXISTS withdrawals(id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, amount REAL, phone TEXT, status TEXT, date TEXT)")
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS users(
+    id INTEGER PRIMARY KEY,
+    balance REAL DEFAULT 0,
+    phone TEXT
+)
+""")
+
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS channels(
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT
+)
+""")
+
 conn.commit()
 
-# ================= KEYBOARDS =================
-def main_kb():
+# ================= KEYBOARD =================
+def main_menu():
     return ReplyKeyboardMarkup([
         ["📊 حالت"],
         ["💰 پیسی زیاتول", "🎁 بونس"],
@@ -27,158 +41,169 @@ def main_kb():
         ["ℹ️ د ربات په اړه"]
     ], resize_keyboard=True)
 
-def admin_kb():
+def admin_menu():
     return ReplyKeyboardMarkup([
-        ["👥 یوزران", "📊 احصایه"],
-        ["📢 برودکاست", "💰 ریوارد کنټرول"],
-        ["📣 آټو پوسټ", "💸 ویډرا درخواستونه"],
-        ["⚙️ سیټینګ", "🔙 بیرته"]
+        ["➕ چینل اضافه", "➖ چینل حذف"],
+        ["📊 احصایه"],
+        ["🔙 بیرته"]
     ], resize_keyboard=True)
 
 # ================= FORCE JOIN =================
 async def force_join(update, context):
-    if not CHANNELS:
+    cursor.execute("SELECT username FROM channels")
+    channels = cursor.fetchall()
+
+    if not channels:
         return True
-    uid = update.effective_user.id
-    for ch in CHANNELS:
+
+    buttons = []
+    not_joined = False
+
+    for ch in channels:
+        ch = ch[0]
         try:
-            member = await context.bot.get_chat_member(ch, uid)
+            member = await context.bot.get_chat_member(ch, update.effective_user.id)
             if member.status not in ["member", "administrator", "creator"]:
-                link = await context.bot.create_chat_invite_link(ch)
-                await update.message.reply_text(f"⚠️ چینل ته جواین شه:\n{link.invite_link}")
-                return False
+                not_joined = True
+                buttons.append([InlineKeyboardButton(f"📢 {ch}", url=f"https://t.me/{ch.replace('@','')}")])
         except:
-            return False
+            not_joined = True
+
+    if not_joined:
+        buttons.append([InlineKeyboardButton("✅ چک کول", callback_data="check_join")])
+        await update.message.reply_text(
+            "⚠️ مهرباني وکړئ لاندې چینلونو ته Join شئ:",
+            reply_markup=InlineKeyboardMarkup(buttons)
+        )
+        return False
+
     return True
 
 # ================= START =================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
+
     cursor.execute("INSERT OR IGNORE INTO users(id) VALUES(?)", (user.id,))
     conn.commit()
 
     if not await force_join(update, context):
         return
 
-    await update.message.reply_text("✨ ښه راغلاست!", reply_markup=main_kb())
+    await update.message.reply_text("✨ ښه راغلاست!", reply_markup=main_menu())
+
+# ================= CHECK JOIN BUTTON =================
+async def check_join_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    if await force_join(update, context):
+        await query.message.reply_text("✅ تاسو Join کړي!", reply_markup=main_menu())
+
+# ================= STATUS =================
+async def status(update, context):
+    uid = update.effective_user.id
+    cursor.execute("SELECT balance FROM users WHERE id=?", (uid,))
+    bal = cursor.fetchone()[0]
+
+    await update.message.reply_text(f"💰 بیلانس: {bal} AFN", reply_markup=main_menu())
+
+# ================= PHONE =================
+async def save_phone(update, context):
+    uid = update.effective_user.id
+    phone = update.message.text
+
+    if not phone.isdigit() or len(phone) != 10:
+        await update.message.reply_text("❌ ۱۰ رقمي نمبر ولیکئ")
+        return
+
+    cursor.execute("UPDATE users SET phone=? WHERE id=?", (phone, uid))
+    conn.commit()
+
+    await update.message.reply_text("✅ نمبر ثبت شو", reply_markup=main_menu())
+
+# ================= WITHDRAW =================
+async def withdraw(update, context):
+    uid = update.effective_user.id
+    cursor.execute("SELECT balance, phone FROM users WHERE id=?", (uid,))
+    bal, phone = cursor.fetchone()
+
+    if not phone:
+        await update.message.reply_text("❌ نمبر داخل کړئ")
+        return
+
+    if bal < 50:
+        await update.message.reply_text("❌ لږ تر لږه 50 AFN پکار دی")
+        return
+
+    await update.message.reply_text("💸 ویډرا درخواست ثبت شو", reply_markup=main_menu())
 
 # ================= ADMIN =================
-async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def admin(update, context):
     if update.effective_user.id != ADMIN_ID:
-        await update.message.reply_text("❌ ته اډمین نه یې")
         return
-    await update.message.reply_text("⚙️ Admin Panel", reply_markup=admin_kb())
+    await update.message.reply_text("⚙️ Admin Panel", reply_markup=admin_menu())
 
-# ================= HANDLER =================
-async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def add_channel(update, context):
+    if update.effective_user.id != ADMIN_ID:
+        return
+    await update.message.reply_text("چینل یوزرنیم ولیکئ @example")
+
+    context.user_data["add_channel"] = True
+
+async def save_channel(update, context):
+    if context.user_data.get("add_channel"):
+        ch = update.message.text
+        cursor.execute("INSERT INTO channels(username) VALUES(?)", (ch,))
+        conn.commit()
+
+        context.user_data["add_channel"] = False
+        await update.message.reply_text("✅ چینل اضافه شو", reply_markup=admin_menu())
+
+async def stats(update, context):
+    cursor.execute("SELECT COUNT(*) FROM users")
+    count = cursor.fetchone()[0]
+
+    await update.message.reply_text(f"👥 ټول یوزران: {count}", reply_markup=admin_menu())
+
+# ================= MESSAGE =================
+async def msg(update, context):
     text = update.message.text
-    uid = update.effective_user.id
 
-    if uid != ADMIN_ID:
-        if not await force_join(update, context):
-            return
+    if context.user_data.get("add_channel"):
+        await save_channel(update, context)
+        return
 
-    # ===== ADMIN PART =====
-    if uid == ADMIN_ID:
-        if text == "👥 یوزران":
-            cursor.execute("SELECT COUNT(*) FROM users")
-            count = cursor.fetchone()[0]
-            await update.message.reply_text(f"👥 ټول یوزران: {count}", reply_markup=admin_kb())
-
-        elif text == "📊 احصایه":
-            cursor.execute("SELECT SUM(balance) FROM users")
-            total = cursor.fetchone()[0] or 0
-            await update.message.reply_text(f"💰 ټول بیلانس: {total}", reply_markup=admin_kb())
-
-        elif text == "📢 برودکاست":
-            context.user_data["broadcast"] = True
-            await update.message.reply_text("✉️ پیغام ولیکه:", reply_markup=admin_kb())
-
-        elif context.user_data.get("broadcast"):
-            cursor.execute("SELECT id FROM users")
-            users = cursor.fetchall()
-            for u in users:
-                try:
-                    await context.bot.send_message(u[0], text)
-                except:
-                    pass
-            context.user_data["broadcast"] = False
-            await update.message.reply_text("✅ واستول شو", reply_markup=admin_kb())
-
-        elif text == "💸 ویډرا درخواستونه":
-            cursor.execute("SELECT * FROM withdrawals WHERE status='pending'")
-            data = cursor.fetchall()
-            msg = "📋 درخواستونه:\n"
-            for d in data:
-                msg += f"\nID:{d[0]} | {d[2]} AFN"
-            await update.message.reply_text(msg, reply_markup=admin_kb())
-
-        elif text == "🔙 بیرته":
-            await update.message.reply_text("اصلي مینو", reply_markup=main_kb())
-            return
-
-    # ===== USER PART =====
     if text == "📊 حالت":
-        cursor.execute("SELECT balance FROM users WHERE id=?", (uid,))
-        bal = cursor.fetchone()[0]
-        await update.message.reply_text(f"💰 بیلانس: {bal}", reply_markup=main_kb())
-
-    elif text == "🎁 بونس":
-        today = datetime.date.today().isoformat()
-        cursor.execute("SELECT last_daily FROM users WHERE id=?", (uid,))
-        last = cursor.fetchone()[0]
-        if last == today:
-            await update.message.reply_text("❌ اخیستی دی", reply_markup=main_kb())
-        else:
-            cursor.execute("UPDATE users SET balance=balance+1,last_daily=? WHERE id=?", (today, uid))
-            conn.commit()
-            await update.message.reply_text("✅ +1 AFN", reply_markup=main_kb())
-
-    elif text == "👥 دعوت":
-        link = f"https://t.me/{BOT_USERNAME}?start={uid}"
-        await update.message.reply_text(link, reply_markup=main_kb())
+        await status(update, context)
 
     elif text == "📞 نمبر داخلول":
-        context.user_data["phone"] = True
-        await update.message.reply_text("📱 نمبر ولیکه:", reply_markup=main_kb())
+        await update.message.reply_text("📱 نمبر ولیکئ")
 
-    elif context.user_data.get("phone"):
-        if text.isdigit():
-            cursor.execute("UPDATE users SET phone=? WHERE id=?", (text, uid))
-            conn.commit()
-            context.user_data["phone"] = False
-            await update.message.reply_text("✅ ثبت شو", reply_markup=main_kb())
-        else:
-            await update.message.reply_text("❌ غلط نمبر", reply_markup=main_kb())
+    elif text.isdigit():
+        await save_phone(update, context)
 
     elif text == "💸 ویډرا":
-        context.user_data["withdraw"] = True
-        await update.message.reply_text("💸 مقدار ولیکه:", reply_markup=main_kb())
+        await withdraw(update, context)
 
-    elif context.user_data.get("withdraw"):
-        if text.replace('.', '', 1).isdigit():
-            amount = float(text)
-            cursor.execute("SELECT balance,phone FROM users WHERE id=?", (uid,))
-            bal, phone = cursor.fetchone()
-            if amount <= bal:
-                cursor.execute("INSERT INTO withdrawals(user_id,amount,phone,status,date) VALUES(?,?,?,?,?)",
-                               (uid, amount, phone, "pending", str(datetime.datetime.now())))
-                cursor.execute("UPDATE users SET balance=balance-? WHERE id=?", (amount, uid))
-                conn.commit()
-                context.user_data["withdraw"] = False
-                await update.message.reply_text("✅ درخواست ثبت شو", reply_markup=main_kb())
-            else:
-                await update.message.reply_text("❌ بیلانس کم دی", reply_markup=main_kb())
+    elif text == "➕ چینل اضافه":
+        await add_channel(update, context)
+
+    elif text == "📊 احصایه":
+        await stats(update, context)
 
     elif text == "🔙 بیرته":
-        await update.message.reply_text("اصلي مینو", reply_markup=main_kb())
+        await start(update, context)
 
 # ================= RUN =================
 app = Application.builder().token(TOKEN).build()
 
 app.add_handler(CommandHandler("start", start))
-app.add_handler(CommandHandler("admin", admin_panel))
-app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handler))
+app.add_handler(CommandHandler("admin", admin))
 
-print("BOT RUNNING...")
+from telegram.ext import CallbackQueryHandler
+app.add_handler(CallbackQueryHandler(check_join_callback, pattern="check_join"))
+
+app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, msg))
+
+print("Bot Running...")
 app.run_polling()
