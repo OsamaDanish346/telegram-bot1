@@ -3,7 +3,7 @@ import datetime
 from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
-TOKEN = "8778331918:AAE5uzWflufC_AkLDz62m4A80BsbIZoZtvI"   # ✅ space لرې شو
+TOKEN = "8778331918:AAE5uzWflufC_AkLDz62m4A80BsbIZoZtvI"
 ADMIN_ID = 8289491009
 
 CHANNELS = ["@afghan_reward", "@khanda_koor", "@nice_image1"]
@@ -33,7 +33,7 @@ CREATE TABLE IF NOT EXISTS withdrawals(
 """)
 conn.commit()
 
-# ==================== KEYBOARDS ====================
+# ================= KEYBOARDS =================
 def main_keyboard():
     return ReplyKeyboardMarkup([
         ["📊 حالت"],
@@ -58,60 +58,29 @@ def bonus_keyboard():
         ["🔙 بیرته"]
     ], resize_keyboard=True)
 
-def admin_keyboard():
-    return ReplyKeyboardMarkup([
-        ["👥 یوزران", "📊 احصایه"],
-        ["📢 برودکاست", "💰 ریوارد کنټرول"],
-        ["📣 آټو پوسټ", "💸 ویډرا درخواستونه"],
-        ["⚙️ سیټینګ", "🔙 بیرته"]
-    ], resize_keyboard=True)
-
-# ==================== FORCE JOIN ====================
+# ================= FORCE JOIN =================
 async def check_force_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not CHANNELS:
         return True
+
     user_id = update.effective_user.id
+
     for ch in CHANNELS:
         try:
             member = await context.bot.get_chat_member(ch, user_id)
             if member.status not in ["member", "administrator", "creator"]:
                 link = await context.bot.create_chat_invite_link(ch)
-                await update.message.reply_text(f"⚠️ لومړی دا چینل ته جوائن شئ:\n{link.invite_link}")
+                await update.message.reply_text(f"⚠️ لومړی چینل ته جوائن شئ:\n{link.invite_link}")
                 return False
         except:
             pass
+
     return True
 
-# ==================== ټاسکونه ====================
-async def tasks_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not CHANNELS:
-        await update.message.reply_text("⚠️ فعال ټاسکونه شتون نه لري.\nاډمین ته ووایاست چې چینلونه اضافه کړي.")
-        return
-
-    user_id = update.effective_user.id
-    joined_all = True
-
-    for ch in CHANNELS:
-        try:
-            member = await context.bot.get_chat_member(ch, user_id)
-            if member.status not in ["member", "administrator", "creator"]:
-                joined_all = False
-        except:
-            joined_all = False
-
-    if joined_all:
-        cursor.execute("SELECT balance FROM users WHERE id=?", (user_id,))
-        balance = (cursor.fetchone() or [0])[0]
-        new_balance = balance + 1.0
-        cursor.execute("UPDATE users SET balance=? WHERE id=?", (new_balance, user_id))
-        conn.commit()
-        await update.message.reply_text("✅ تاسو بریالۍ توګه ټول ټاسکونه پوره کړل دي!\n+۱ افغانۍ اضافه شوه.")
-    else:
-        await update.message.reply_text("⚠️ ټولو چینلونو ته لا نه یاست جوائن.")
-
-# ==================== START ====================
+# ================= START =================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
+
     cursor.execute("INSERT OR IGNORE INTO users(id) VALUES(?)", (user.id,))
     conn.commit()
 
@@ -120,46 +89,142 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text("✨ ښه راغلاست!", reply_markup=main_keyboard())
 
-# ==================== STATUS ====================
+# ================= STATUS =================
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
+
     cursor.execute("SELECT balance FROM users WHERE id=?", (user.id,))
     balance = (cursor.fetchone() or [0])[0]
 
-    text = f"""🤵🏻‍♂️ استعمالوونکی = {user.first_name}
+    await update.message.reply_text(f"""
+🤵🏻‍♂️ استعمالوونکی = {user.first_name}
 
 💳 ایډي کارن : {user.id}
 💵 ستاسو پيسو اندازه = {balance:.1f} AFN
-"""
-    await update.message.reply_text(text)
+""")
 
-# ==================== دعوت ====================
+# ================= BONUS =================
+async def daily_bonus(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    today = datetime.datetime.now().strftime("%Y-%m-%d")
+
+    cursor.execute("SELECT balance, last_daily_bonus FROM users WHERE id=?", (uid,))
+    row = cursor.fetchone() or [0, None]
+
+    if row[1] == today:
+        await update.message.reply_text("❌ نن مو بونس اخیستی")
+    else:
+        new_balance = row[0] + 0.5
+        cursor.execute("UPDATE users SET balance=?, last_daily_bonus=? WHERE id=?", (new_balance, today, uid))
+        conn.commit()
+        await update.message.reply_text("✅ 0.5 افغانۍ اضافه شوه")
+
+async def weekly_bonus(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    now = datetime.datetime.now()
+
+    cursor.execute("SELECT balance, last_weekly_bonus FROM users WHERE id=?", (uid,))
+    row = cursor.fetchone() or [0, None]
+
+    if row[1] and (now - datetime.datetime.strptime(row[1], "%Y-%m-%d")).days < 7:
+        await update.message.reply_text("❌ لا وخت نه دی پوره شوی")
+    else:
+        new_balance = row[0] + 5
+        cursor.execute("UPDATE users SET balance=?, last_weekly_bonus=? WHERE id=?", (new_balance, now.strftime("%Y-%m-%d"), uid))
+        conn.commit()
+        await update.message.reply_text("✅ 5 افغانۍ اضافه شوه")
+
+# ================= REFERRAL =================
 async def referral(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    bot_username = "AfghanRewardBot"   # ✅ بدل شو
-
-    link = f"https://t.me/{bot_username}?start={user_id}"
+    uid = update.effective_user.id
+    link = f"https://t.me/AfghanRewardBot?start={uid}"
 
     await update.message.reply_text(f"🔗 ستاسو لینک:\n{link}")
 
-# ==================== MESSAGE ====================
+# ================= WITHDRAW =================
+async def withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+
+    cursor.execute("SELECT balance, phone FROM users WHERE id=?", (uid,))
+    row = cursor.fetchone() or [0, None]
+
+    if not row[1]:
+        await update.message.reply_text("📱 لومړی نمبر داخل کړئ")
+        return
+
+    if row[0] < 50:
+        await update.message.reply_text("⚠️ لږ تر لږه ۵۰ افغانۍ پکار دي")
+        return
+
+    await update.message.reply_text("💸 مقدار ولیکئ:")
+    context.user_data["withdraw"] = True
+
+# ================= MESSAGE =================
 async def msg_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
+    uid = update.effective_user.id
+
+    if not await check_force_join(update, context):
+        return
+
+    # withdraw amount
+    if context.user_data.get("withdraw"):
+        if text.replace('.', '', 1).isdigit():
+            amount = float(text)
+
+            cursor.execute("SELECT balance, phone FROM users WHERE id=?", (uid,))
+            bal, phone = cursor.fetchone()
+
+            if amount < 50 or amount > bal:
+                await update.message.reply_text("❌ مقدار غلط دی")
+            else:
+                cursor.execute("UPDATE users SET balance=? WHERE id=?", (bal - amount, uid))
+                conn.commit()
+                await update.message.reply_text("✅ درخواست ثبت شو")
+
+            context.user_data["withdraw"] = False
+        return
 
     if text == "📊 حالت":
         await status(update, context)
 
+    elif text == "💰 پیسی زیاتول":
+        await update.message.reply_text("انتخاب:", reply_markup=earn_keyboard())
+
+    elif text == "🎁 بونس":
+        await update.message.reply_text("انتخاب:", reply_markup=bonus_keyboard())
+
+    elif text == "📅 ډیلی بونس":
+        await daily_bonus(update, context)
+
+    elif text == "📆 ویکلی بونس":
+        await weekly_bonus(update, context)
+
     elif text == "👥 دعوت":
         await referral(update, context)
 
-# ==================== RUN ====================
-if __name__ == "__main__":
-    app = Application.builder().token(TOKEN).build()
+    elif text == "📞 نمبر داخلول":
+        await update.message.reply_text("📱 خپل ۱۰ رقمي نمبر ولیکئ:")
 
-    app.add_handler(CommandHandler("start", start))
+    elif text == "💸 ویډرا":
+        await withdraw(update, context)
 
-    # ✅ مهم اصلاح دلته دی
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, msg_handler))
+    elif text == "🔙 بیرته":
+        await start(update, context)
 
-    print("Bot Running...")
-    app.run_polling()
+    elif text.isdigit() and len(text) == 10:
+        cursor.execute("UPDATE users SET phone=? WHERE id=?", (text, uid))
+        conn.commit()
+        await update.message.reply_text("✅ نمبر ثبت شو")
+
+    elif text.isdigit():
+        await update.message.reply_text("❌ نمبر باید ۱۰ رقمه وي")
+
+# ================= RUN =================
+app = Application.builder().token(TOKEN).build()
+
+app.add_handler(CommandHandler("start", start))
+app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, msg_handler))
+
+print("Bot Running...")
+app.run_polling()
