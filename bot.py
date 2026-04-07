@@ -1,167 +1,148 @@
 import sqlite3
+import time
 from telegram import *
 from telegram.ext import *
 
 TOKEN = "8778331918:AAE5uzWflufC_AkLDz62m4A80BsbIZoZtvI"
 ADMIN_ID = 8289491009
+BOT_USERNAME = "@Afghan_Reward_bot"
 
+CHANNELS = ["@afghan_reward", "@khanda_koor", "@nice_image1"]
+
+# -------- DATABASE --------
 conn = sqlite3.connect("bot.db", check_same_thread=False)
 cursor = conn.cursor()
 
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS users(
 id INTEGER PRIMARY KEY,
-balance INTEGER DEFAULT 0,
-phone TEXT
+balance REAL DEFAULT 0,
+phone TEXT,
+joined INTEGER DEFAULT 0,
+last_bonus INTEGER DEFAULT 0,
+weekly_bonus INTEGER DEFAULT 0,
+invited_by INTEGER DEFAULT 0
 )
 """)
 conn.commit()
 
+# -------- FORCE JOIN --------
+async def is_joined(update, context):
+    user_id = update.effective_user.id
 
-# ---------------- START ----------------
+    for ch in CHANNELS:
+        try:
+            member = await context.bot.get_chat_member(ch, user_id)
+            if member.status not in ["member", "administrator", "creator"]:
+                return False
+        except:
+            return False
+    return True
+
+# -------- START --------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
+    uid = user.id
 
-    cursor.execute("INSERT OR IGNORE INTO users(id) VALUES(?)", (user.id,))
+    cursor.execute("INSERT OR IGNORE INTO users(id) VALUES(?)", (uid,))
     conn.commit()
+
+    # Invite System
+    if context.args:
+        try:
+            ref = int(context.args[0])
+            if ref != uid:
+                cursor.execute("SELECT invited_by FROM users WHERE id=?", (uid,))
+                if cursor.fetchone()[0] == 0:
+                    cursor.execute("UPDATE users SET invited_by=? WHERE id=?", (ref, uid))
+                    cursor.execute("UPDATE users SET balance=balance+2 WHERE id=?", (ref,))
+                    conn.commit()
+        except:
+            pass
+
+    # Force Join
+    if not await is_joined(update, context):
+        buttons = []
+        for ch in CHANNELS:
+            buttons.append([InlineKeyboardButton(f"📢 Join {ch}", url=f"https://t.me/{ch[1:]}")])
+
+        await update.message.reply_text(
+            "⚠️ مهرباني وکړئ لومړی لاندې چینلونو ته Join شئ بیا /start ولیکئ",
+            reply_markup=InlineKeyboardMarkup(buttons)
+        )
+        return
 
     kb = [
         ["📊 حالت", "🎁 بونس"],
-        ["👥 دعوت", "💰 پیسی زیاتول"],
+        ["👥 دعوت", "💰 پیسې زیاتول"],
+        ["📞 نمبر داخلول", "📥 ایزیلوډ"],
         ["ℹ️ د ربات په اړه"]
     ]
 
-    await update.message.reply_text("اصلي مینو", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
+    await update.message.reply_text("🏠 اصلي مینو", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
 
 
-# ---------------- STATUS ----------------
-async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# -------- STATUS --------
+async def status(update, context):
     user = update.effective_user
-
     cursor.execute("SELECT balance FROM users WHERE id=?", (user.id,))
-    balance = cursor.fetchone()[0]
+    bal = cursor.fetchone()[0]
 
-    text = f"""
+    txt = f"""
 🤵🏻‍♂️استعمالوونکی = {user.first_name}
 
 💳 ایډي کارن : {user.id}
-💵ستاسو پيسو اندازه= {balance}
+💵ستاسو پيسو اندازه= {bal} AFN
 
-🔗 د بیلانس زیاتولو لپاره  [ 👫 کسان ] دعوت کړی،
+🔗 د بیلانس زیاتولو لپاره 👥 کسان دعوت کړی،
 بوټ ته!
 """
-    await update.message.reply_text(text)
+    await update.message.reply_text(txt)
 
 
-# ---------------- TASK CHECK ----------------
-async def check_tasks(update, context):
-    # دلته کولای شې چینل چک اضافه کړې
-    return True
+# -------- BONUS --------
+async def bonus(update, context):
+    uid = update.effective_user.id
+    now = int(time.time())
+
+    cursor.execute("SELECT last_bonus, weekly_bonus FROM users WHERE id=?", (uid,))
+    last, week = cursor.fetchone()
+
+    # Daily
+    if now - last >= 86400:
+        cursor.execute("UPDATE users SET balance=balance+0.5, last_bonus=? WHERE id=?", (now, uid))
+        conn.commit()
+        await update.message.reply_text("🎁 0.5 AFN Daily Bonus ترلاسه شو!")
+    else:
+        await update.message.reply_text("⏳ Daily Bonus مخکې اخیستل شوی")
+
+    # Weekly
+    if now - week >= 604800:
+        cursor.execute("UPDATE users SET balance=balance+5, weekly_bonus=? WHERE id=?", (now, uid))
+        conn.commit()
+        await update.message.reply_text("🎉 5 AFN Weekly Bonus ترلاسه شو!")
 
 
-# ---------------- ADMIN ----------------
-async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        return await update.message.reply_text("❌ تاسو اډمین نه یاست")
+# -------- INVITE --------
+async def invite(update, context):
+    uid = update.effective_user.id
+    link = f"https://t.me/{BOT_USERNAME}?start={uid}"
 
-    kb = [
-        ["👥 یوزران", "📊 احصایه"],
-        ["📢 برودکاست", "💰 ریوارډ کنټرول"],
-        ["➕ چینل اضافه", "⚙️ سیټینګ"],
-        ["🔙 بیرته"]
-    ]
+    await update.message.reply_text(f"""
+👥 خپل ځانګړی لینک:
 
-    await update.message.reply_text("👑 Admin Panel", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
+{link}
 
-
-# ---------------- MESSAGE HANDLER ----------------
-async def msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    text = update.message.text
-
-    uid = user.id
-
-    # ✅ ADMIN BYPASS
-    if uid != ADMIN_ID:
-        if not await check_tasks(update, context):
-            return
-
-    # -------- MAIN BUTTONS --------
-    if text == "📊 حالت":
-        await status(update, context)
-
-    elif text == "💰 پیسی زیاتول":
-        kb = [
-            ["🎯 تسکونه"],
-            ["👥 دعوت"],
-            ["🎁 بونس"],
-            ["🔙 بیرته"]
-        ]
-        await update.message.reply_text("انتخاب:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
-
-    elif text == "🎯 تسکونه":
-        await update.message.reply_text("✅ تاسو بریالۍ توګه ټاسک ترسره کړ")
-
-    elif text == "🎁 بونس":
-        await update.message.reply_text("🎁 بونس ترلاسه شو")
-
-    elif text == "👥 دعوت":
-        await update.message.reply_text(f"خپل لینک:\nhttps://t.me/YOUR_BOT?start={uid}")
-
-    elif text == "ℹ️ د ربات په اړه":
-        await update.message.reply_text("دا یو ریوارډ بوټ دی")
-
-    elif text == "🔙 بیرته":
-        await start(update, context)
-
-    # -------- ADMIN BUTTONS --------
-    elif text == "📊 احصایه":
-        if uid == ADMIN_ID:
-            cursor.execute("SELECT COUNT(*) FROM users")
-            total = cursor.fetchone()[0]
-            await update.message.reply_text(f"👥 ټول یوزران: {total}")
-
-    elif text == "👥 یوزران":
-        if uid == ADMIN_ID:
-            await update.message.reply_text("📋 یوزر لیست")
-
-    elif text == "📢 برودکاست":
-        if uid == ADMIN_ID:
-            await update.message.reply_text("📢 پیغام ولیکه")
-
-    elif text == "💰 ریوارډ کنټرول":
-        if uid == ADMIN_ID:
-            await update.message.reply_text("💰 ریوارډ تنظیم")
-
-    elif text == "➕ چینل اضافه":
-        if uid == ADMIN_ID:
-            await update.message.reply_text("چینل یوزرنیم ولیکه")
-
-    elif text == "⚙️ سیټینګ":
-        if uid == ADMIN_ID:
-            await update.message.reply_text("سیټینګ خلاص شو")
-
-    # -------- PHONE NUMBER --------
-    elif text == "📞 نمبر داخلول":
-        await update.message.reply_text("📱 خپل 10 رقمي نمبر ولیکه:")
-
-    elif text.isdigit():
-        if len(text) == 10:
-            cursor.execute("UPDATE users SET phone=? WHERE id=?", (text, uid))
-            conn.commit()
-            await update.message.reply_text("✅ ستاسو نمبر ثبت شو")
-        elif len(text) < 10:
-            await update.message.reply_text("❌ نمبر کم دی (10 رقمه)")
-        else:
-            await update.message.reply_text("❌ نمبر زیات دی (10 رقمه)")
+✔️ هر Invite = 2 AFN
+""")
 
 
-# ---------------- MAIN ----------------
-app = Application.builder().token(TOKEN).build()
+# -------- EASYLOAD --------
+async def easyload(update, context):
+    uid = update.effective_user.id
 
-app.add_handler(CommandHandler("start", start))
-app.add_handler(CommandHandler("admin", admin))
-app.add_handler(MessageHandler(filters.TEXT, msg))
+    cursor.execute("SELECT balance FROM users WHERE id=?", (uid,))
+    bal = cursor.fetchone()[0]
 
-print("Bot Running...")
-app.run_polling()
+    if bal < 50:
+        await update.message.reply_text("⚠️ لږ تر لږه پنځوس افغانۍ بايد په خپل حساب کې ولرئ
