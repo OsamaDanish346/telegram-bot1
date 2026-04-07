@@ -1,7 +1,7 @@
 import sqlite3
 import datetime
-from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
+from telegram import *
+from telegram.ext import *
 
 TOKEN = "8778331918:AAE5uzWflufC_AkLDz62m4A80BsbIZoZtvI"
 ADMIN_ID = 8289491009
@@ -16,9 +16,10 @@ CREATE TABLE IF NOT EXISTS users(
 id INTEGER PRIMARY KEY,
 balance REAL DEFAULT 0,
 phone TEXT,
+wallet TEXT,
+invited_by INTEGER,
 last_daily TEXT,
-last_weekly TEXT,
-inviter INTEGER
+last_weekly TEXT
 )
 """)
 
@@ -45,68 +46,55 @@ conn.commit()
 # ================= KEYBOARDS =================
 def main_kb():
     return ReplyKeyboardMarkup([
-        ["📊 Profile"],
-        ["💰 Earn", "🎁 Bonus"],
-        ["👥 Invite"],
-        ["📞 Add Number", "💸 Withdraw"],
-        ["ℹ️ About"]
-    ], resize_keyboard=True)
-
-def earn_kb():
-    return ReplyKeyboardMarkup([
-        ["🎯 Tasks"],
-        ["👥 Invite"],
-        ["🎁 Bonus"],
-        ["📆 Weekly Bonus"],
-        ["🔙 Back"]
+        ["📊 Statistics", "💸 Withdraw"],
+        ["👥 Referral", "💰 Balance"],
+        ["💼 Set Wallet", "📋 Tasks"],
+        ["🎁 Bonus", "📜 Terms"]
     ], resize_keyboard=True)
 
 def admin_kb():
     return ReplyKeyboardMarkup([
         ["👥 Users", "📊 Stats"],
         ["📢 Broadcast", "💸 Withdraw Requests"],
-        ["➕ Add Channel", "➖ Remove Channel"],
+        ["➕ Add Channel", "➖ Delete Channel"],
         ["🔙 Back"]
     ], resize_keyboard=True)
 
-# ================= SAFE USER =================
+# ================= USER =================
 def get_user(uid):
     cursor.execute("SELECT * FROM users WHERE id=?", (uid,))
-    if not cursor.fetchone():
+    user = cursor.fetchone()
+    if not user:
         cursor.execute("INSERT INTO users(id) VALUES(?)", (uid,))
         conn.commit()
 
 # ================= FORCE JOIN =================
 async def force_join(update, context):
     try:
-        channels = cursor.execute("SELECT username FROM channels").fetchall()
+        cursor.execute("SELECT username FROM channels")
+        channels = cursor.fetchall()
+
         if not channels:
             return True
 
         uid = update.effective_user.id
         buttons = []
-        not_joined = False
 
         for ch in channels:
             ch = ch[0]
             try:
                 member = await context.bot.get_chat_member(ch, uid)
-                if member.status not in ["member", "administrator", "creator"]:
-                    not_joined = True
-                    buttons.append([InlineKeyboardButton(f"Join {ch}", url=f"https://t.me/{ch.replace('@','')}")])
+                if member.status not in ["member","administrator","creator"]:
+                    buttons.append([InlineKeyboardButton(f"📢 {ch}", url=f"https://t.me/{ch.replace('@','')}")])
             except:
-                not_joined = True
+                buttons.append([InlineKeyboardButton(f"📢 {ch}", url=f"https://t.me/{ch.replace('@','')}")])
 
-        if not_joined:
-            buttons.append([InlineKeyboardButton("✅ Check Join", callback_data="check_join")])
-
-            msg = "⚠️ Please join all required channels first:"
-
-            if update.message:
-                await update.message.reply_text(msg, reply_markup=InlineKeyboardMarkup(buttons))
-            else:
-                await update.callback_query.message.reply_text(msg, reply_markup=InlineKeyboardMarkup(buttons))
-
+        if buttons:
+            buttons.append([InlineKeyboardButton("✅ Joined All", callback_data="check_join")])
+            await update.message.reply_text(
+                "🚀 Join all channels to continue:",
+                reply_markup=InlineKeyboardMarkup(buttons)
+            )
             return False
 
         return True
@@ -117,58 +105,55 @@ async def force_join(update, context):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         uid = update.effective_user.id
+        args = context.args
         get_user(uid)
 
-        # Invite system
-        if context.args:
-            try:
-                ref = int(context.args[0])
-                if ref != uid:
-                    inviter = cursor.execute("SELECT inviter FROM users WHERE id=?", (uid,)).fetchone()[0]
+        # Referral System
+        if args:
+            ref = int(args[0])
+            if ref != uid:
+                cursor.execute("SELECT invited_by FROM users WHERE id=?", (uid,))
+                if cursor.fetchone()[0] is None:
+                    cursor.execute("UPDATE users SET invited_by=? WHERE id=?", (ref, uid))
+                    cursor.execute("UPDATE users SET balance=balance+2 WHERE id=?", (ref,))
+                    conn.commit()
 
-                    if inviter is None:
-                        cursor.execute("UPDATE users SET inviter=? WHERE id=?", (ref, uid))
-                        cursor.execute("UPDATE users SET balance=balance+2 WHERE id=?", (ref,))
-                        conn.commit()
-
-                        # New user message
-                        await update.message.reply_text(
-                            "🎉 Welcome!\n\nYou joined using an invite link!\nEarn money via tasks, bonus, and referrals 🚀"
-                        )
-
-                        # Notify inviter
-                        try:
-                            await context.bot.send_message(
-                                ref,
-                                "🎉 New user joined via your link!\n💰 +2 AFN added to your balance"
-                            )
-                        except:
-                            pass
-            except:
-                pass
+                    try:
+                        await context.bot.send_message(ref, "🎉 New referral joined! +2 ⭐")
+                    except:
+                        pass
 
         if not await force_join(update, context):
             return
 
-        await update.message.reply_text("✨ Welcome to Reward Bot", reply_markup=main_kb())
+        await update.message.reply_text(
+"""🎉 Earn Stars Easily!
+
+💰 Invite = 2 ⭐
+🎁 Daily = 0.5 ⭐
+🔥 Weekly = 2 ⭐
+💸 Withdraw = 20 ⭐
+
+👇 Use menu:""",
+            reply_markup=main_kb()
+        )
 
     except Exception as e:
-        print("START ERROR:", e)
+        print(e)
 
 # ================= CHECK JOIN =================
 async def check_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-
-    fake = Update(update.update_id, message=query.message)
-
-    if await force_join(fake, context):
-        await query.message.reply_text("✅ Verified!", reply_markup=main_kb())
+    try:
+        query = update.callback_query
+        await query.answer()
+        await query.message.reply_text("✅ Verified! Use menu", reply_markup=main_kb())
+    except:
+        pass
 
 # ================= ADMIN =================
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
-        return await update.message.reply_text("❌ You are not admin")
+        return await update.message.reply_text("❌ Not Admin")
 
     await update.message.reply_text("⚙️ Admin Panel", reply_markup=admin_kb())
 
@@ -177,6 +162,7 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         text = update.message.text
         uid = update.effective_user.id
+
         get_user(uid)
 
         if uid != ADMIN_ID:
@@ -188,14 +174,13 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             if text == "👥 Users":
                 count = cursor.execute("SELECT COUNT(*) FROM users").fetchone()[0]
-                await update.message.reply_text(f"Total Users: {count}", reply_markup=admin_kb())
+                await update.message.reply_text(f"👥 {count}", reply_markup=admin_kb())
 
             elif text == "📊 Stats":
                 total = cursor.execute("SELECT SUM(balance) FROM users").fetchone()[0] or 0
-                await update.message.reply_text(f"Total Balance: {total}", reply_markup=admin_kb())
+                await update.message.reply_text(f"💰 {total} ⭐", reply_markup=admin_kb())
 
             elif text == "📢 Broadcast":
-                context.user_data.clear()
                 context.user_data["broadcast"] = True
                 await update.message.reply_text("Send message:")
 
@@ -206,56 +191,47 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         await context.bot.send_message(u[0], text)
                     except:
                         pass
-                context.user_data.clear()
+                context.user_data["broadcast"] = False
                 await update.message.reply_text("✅ Sent", reply_markup=admin_kb())
 
             elif text == "➕ Add Channel":
-                context.user_data.clear()
                 context.user_data["add_channel"] = True
-                await update.message.reply_text("Send channel username (e.g. @channel)")
+                await update.message.reply_text("Send @channel")
 
             elif context.user_data.get("add_channel"):
                 if text.startswith("@"):
-                    exists = cursor.execute("SELECT * FROM channels WHERE username=?", (text,)).fetchone()
-                    if exists:
-                        await update.message.reply_text("Already exists", reply_markup=admin_kb())
-                    else:
-                        cursor.execute("INSERT INTO channels(username) VALUES(?)", (text,))
-                        conn.commit()
-                        await update.message.reply_text("✅ Added", reply_markup=admin_kb())
-                    context.user_data.clear()
+                    cursor.execute("INSERT INTO channels(username) VALUES(?)", (text,))
+                    conn.commit()
+                    context.user_data["add_channel"] = False
+                    await update.message.reply_text("✅ Added", reply_markup=admin_kb())
                 else:
-                    await update.message.reply_text("Invalid format")
+                    await update.message.reply_text("❌ Invalid")
 
-            elif text == "➖ Remove Channel":
-                context.user_data.clear()
-                context.user_data["remove_channel"] = True
-                await update.message.reply_text("Send channel username")
+            elif text == "➖ Delete Channel":
+                context.user_data["del_channel"] = True
+                await update.message.reply_text("Send channel")
 
-            elif context.user_data.get("remove_channel"):
+            elif context.user_data.get("del_channel"):
                 cursor.execute("DELETE FROM channels WHERE username=?", (text,))
                 conn.commit()
-                context.user_data.clear()
-                await update.message.reply_text("✅ Removed", reply_markup=admin_kb())
+                context.user_data["del_channel"] = False
+                await update.message.reply_text("✅ Deleted", reply_markup=admin_kb())
 
             elif text == "🔙 Back":
                 await update.message.reply_text("Main Menu", reply_markup=main_kb())
 
         # ===== USER =====
-        if text == "📊 Profile":
-            bal = cursor.execute("SELECT balance FROM users WHERE id=?", (uid,)).fetchone()[0] or 0
-            await update.message.reply_text(f"💰 Balance: {bal:.1f} AFN")
+        if text == "💰 Balance":
+            bal = cursor.execute("SELECT balance FROM users WHERE id=?", (uid,)).fetchone()[0]
+            await update.message.reply_text(f"💰 {bal} ⭐")
 
-        elif text == "💰 Earn":
-            await update.message.reply_text("Choose:", reply_markup=earn_kb())
-
-        elif text == "🎯 Tasks":
-            cursor.execute("UPDATE users SET balance=balance+1 WHERE id=?", (uid,))
-            conn.commit()
-            await update.message.reply_text("✅ +1 AFN")
+        elif text == "👥 Referral":
+            link = f"https://t.me/{BOT_USERNAME}?start={uid}"
+            count = cursor.execute("SELECT COUNT(*) FROM users WHERE invited_by=?", (uid,)).fetchone()[0]
+            await update.message.reply_text(f"{link}\n👥 {count} referrals\n🎁 2 ⭐ each")
 
         elif text == "🎁 Bonus":
-            today = datetime.date.today().isoformat()
+            today = str(datetime.date.today())
             last = cursor.execute("SELECT last_daily FROM users WHERE id=?", (uid,)).fetchone()[0]
 
             if last == today:
@@ -263,63 +239,44 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 cursor.execute("UPDATE users SET balance=balance+0.5,last_daily=? WHERE id=?", (today, uid))
                 conn.commit()
-                await update.message.reply_text("✅ +0.5 AFN")
+                await update.message.reply_text("🎁 +0.5 ⭐")
 
-        elif text == "📆 Weekly Bonus":
-            now = datetime.datetime.now()
-            last = cursor.execute("SELECT last_weekly FROM users WHERE id=?", (uid,)).fetchone()[0]
+        elif text == "📋 Tasks":
+            await update.message.reply_text("📋 Tasks coming soon")
 
-            if last and (now - datetime.datetime.strptime(last, "%Y-%m-%d")).days < 7:
-                await update.message.reply_text("❌ Not ready yet")
-            else:
-                cursor.execute("UPDATE users SET balance=balance+5,last_weekly=? WHERE id=?", (now.strftime("%Y-%m-%d"), uid))
-                conn.commit()
-                await update.message.reply_text("🎉 +5 AFN")
+        elif text == "💼 Set Wallet":
+            context.user_data["wallet"] = True
+            await update.message.reply_text("Send wallet:")
 
-        elif text == "👥 Invite":
-            link = f"https://t.me/{BOT_USERNAME}?start={uid}"
-            await update.message.reply_text(f"Your link:\n{link}")
-
-        elif text == "📞 Add Number":
-            context.user_data.clear()
-            context.user_data["phone"] = True
-            await update.message.reply_text("Send 10-digit phone number")
-
-        elif context.user_data.get("phone"):
-            if text.isdigit() and len(text) == 10:
-                cursor.execute("UPDATE users SET phone=? WHERE id=?", (text, uid))
-                conn.commit()
-                context.user_data.clear()
-                await update.message.reply_text("✅ Saved")
-            else:
-                await update.message.reply_text("❌ Invalid number")
+        elif context.user_data.get("wallet"):
+            cursor.execute("UPDATE users SET wallet=? WHERE id=?", (text, uid))
+            conn.commit()
+            context.user_data["wallet"] = False
+            await update.message.reply_text("✅ Saved")
 
         elif text == "💸 Withdraw":
-            context.user_data.clear()
-            context.user_data["withdraw"] = True
-            await update.message.reply_text("Enter amount (min 50)")
+            bal, wallet = cursor.execute("SELECT balance,wallet FROM users WHERE id=?", (uid,)).fetchone()
 
-        elif context.user_data.get("withdraw"):
-            if text.replace('.', '', 1).isdigit():
-                amount = float(text)
-                bal = cursor.execute("SELECT balance FROM users WHERE id=?", (uid,)).fetchone()[0]
+            if not wallet:
+                await update.message.reply_text("❌ Set wallet first")
+                return
 
-                if amount >= 50 and amount <= bal:
-                    cursor.execute("UPDATE users SET balance=balance-? WHERE id=?", (amount, uid))
-                    cursor.execute("INSERT INTO withdrawals(user_id,amount,phone,status,date) VALUES(?,?,?,?,?)",
-                                   (uid, amount, "", "pending", str(datetime.datetime.now())))
-                    conn.commit()
-                    context.user_data.clear()
-                    await update.message.reply_text("✅ Request sent")
-                else:
-                    await update.message.reply_text("❌ Invalid amount")
+            if bal < 20:
+                await update.message.reply_text("❌ Minimum 20 ⭐")
+                return
 
-        elif text == "ℹ️ About":
+            await update.message.reply_text("✅ Request sent")
+
+        elif text == "📊 Statistics":
+            total = cursor.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+            await update.message.reply_text(f"👥 Users: {total}")
+
+        elif text == "📜 Terms":
             await update.message.reply_text(
-                "🤖 Reward Bot\n\n"
-                "Earn money by:\n"
-                "• Tasks\n• Invites\n• Bonuses\n\n"
-                "Fast • Simple • Real 💰"
+"""📜 Terms:
+1. No cheating
+2. No fake referrals
+3. Admin can ban anytime"""
             )
 
     except Exception as e:
@@ -333,5 +290,5 @@ app.add_handler(CommandHandler("admin", admin_panel))
 app.add_handler(CallbackQueryHandler(check_join, pattern="check_join"))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handler))
 
-print("BOT RUNNING...")
+print("✅ BOT RUNNING...")
 app.run_polling()
