@@ -41,6 +41,14 @@ username TEXT
 )
 """)
 
+# ✅ NEW TASK CHANNEL TABLE
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS task_channels(
+id INTEGER PRIMARY KEY AUTOINCREMENT,
+username TEXT
+)
+""")
+
 conn.commit()
 
 # ================= KEYBOARDS =================
@@ -57,6 +65,7 @@ def admin_kb():
         ["👥 Users", "📊 Stats"],
         ["📢 Broadcast", "💸 Withdraw Requests"],
         ["➕ Add Channel", "➖ Delete Channel"],
+        ["📋 Task Channels"],
         ["🔙 Back"]
     ], resize_keyboard=True)
 
@@ -162,6 +171,7 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         text = update.message.text
         uid = update.effective_user.id
+        name = update.effective_user.first_name
 
         get_user(uid)
 
@@ -202,10 +212,10 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if text.startswith("@"):
                     cursor.execute("INSERT INTO channels(username) VALUES(?)", (text,))
                     conn.commit()
-                    context.user_data["add_channel"] = False
                     await update.message.reply_text("✅ Added", reply_markup=admin_kb())
                 else:
                     await update.message.reply_text("❌ Invalid")
+                context.user_data["add_channel"] = False
 
             elif text == "➖ Delete Channel":
                 context.user_data["del_channel"] = True
@@ -214,21 +224,49 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             elif context.user_data.get("del_channel"):
                 cursor.execute("DELETE FROM channels WHERE username=?", (text,))
                 conn.commit()
-                context.user_data["del_channel"] = False
                 await update.message.reply_text("✅ Deleted", reply_markup=admin_kb())
+                context.user_data["del_channel"] = False
+
+            # ✅ TASK CHANNEL SYSTEM
+            elif text == "📋 Task Channels":
+                context.user_data["task_channel"] = True
+                await update.message.reply_text("Send @channel to add or name to delete")
+
+            elif context.user_data.get("task_channel"):
+                if text.startswith("@"):
+                    cursor.execute("INSERT INTO task_channels(username) VALUES(?)", (text,))
+                    conn.commit()
+                    await update.message.reply_text("✅ Task Channel Added", reply_markup=admin_kb())
+                else:
+                    cursor.execute("DELETE FROM task_channels WHERE username=?", (text,))
+                    conn.commit()
+                    await update.message.reply_text("❌ Deleted", reply_markup=admin_kb())
+                context.user_data["task_channel"] = False
 
             elif text == "🔙 Back":
                 await update.message.reply_text("Main Menu", reply_markup=main_kb())
 
         # ===== USER =====
-        if text == "💰 Balance":
+
+        elif text == "📊 Statistics":
+            bal = cursor.execute("SELECT balance FROM users WHERE id=?", (uid,)).fetchone()[0]
+
+            await update.message.reply_text(
+f"""🤵🏻‍♂️استعمالوونکی = {name}
+
+💳 ایډي کارن : {uid}
+🌟ستاسو دسټاراندازه = {bal}
+
+🔗 د بیلانس زیاتولو لپاره  👥 کسان دعوت کړی"""
+            )
+
+        elif text == "💰 Balance":
             bal = cursor.execute("SELECT balance FROM users WHERE id=?", (uid,)).fetchone()[0]
             await update.message.reply_text(f"💰 {bal} ⭐")
 
         elif text == "👥 Referral":
             link = f"https://t.me/{BOT_USERNAME}?start={uid}"
-            count = cursor.execute("SELECT COUNT(*) FROM users WHERE invited_by=?", (uid,)).fetchone()[0]
-            await update.message.reply_text(f"{link}\n👥 {count} referrals\n🎁 2 ⭐ each")
+            await update.message.reply_text(link)
 
         elif text == "🎁 Bonus":
             today = str(datetime.date.today())
@@ -242,7 +280,21 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text("🎁 +0.5 ⭐")
 
         elif text == "📋 Tasks":
-            await update.message.reply_text("📋 Tasks coming soon")
+            rows = cursor.execute("SELECT username FROM task_channels").fetchall()
+
+            if not rows:
+                await update.message.reply_text("❌ No tasks")
+                return
+
+            buttons = []
+            for ch in rows:
+                ch = ch[0]
+                buttons.append([InlineKeyboardButton(f"📢 {ch}", url=f"https://t.me/{ch.replace('@','')}")])
+
+            await update.message.reply_text(
+                "📋 Join channels:",
+                reply_markup=InlineKeyboardMarkup(buttons)
+            )
 
         elif text == "💼 Set Wallet":
             context.user_data["wallet"] = True
@@ -266,10 +318,6 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
 
             await update.message.reply_text("✅ Request sent")
-
-        elif text == "📊 Statistics":
-            total = cursor.execute("SELECT COUNT(*) FROM users").fetchone()[0]
-            await update.message.reply_text(f"👥 Users: {total}")
 
         elif text == "📜 Terms":
             await update.message.reply_text(
