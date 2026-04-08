@@ -1,2 +1,5 @@
-python-telegram-bot==22.7
+python-telegram-bot==21.*
+psycopg2-binary
+Flask
+gunicorn
 
