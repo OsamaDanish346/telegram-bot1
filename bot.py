@@ -6,8 +6,8 @@ from telegram.ext import *
 from flask import Flask, request
 
 TOKEN = os.getenv("8778331918:AAE5uzWflufC_AkLDz62m4A80BsbIZoZtvI")
-ADMIN_ID = int(os.getenv("8289491009"))
-BOT_USERNAME = os.getenv("afghan_reward_bot")
+ADMIN_ID = int(os.getenv("ADMIN_ID"))
+BOT_USERNAME = os.getenv("BOT_USERNAME")
 DATABASE_URL = os.getenv("DATABASE_URL")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 
@@ -87,7 +87,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     args = context.args
     get_user(uid)
 
-    # referral
     if args:
         ref = int(args[0])
         if ref != uid:
@@ -152,11 +151,27 @@ async def check_tasks(update, context):
     else:
         await query.message.reply_text("❌ Join all")
 
+# ================= CHECK JOIN =================
+async def check_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    if await force_join(query, context):
+        await query.message.reply_text("✅ Verified!", reply_markup=ReplyKeyboardMarkup([
+            ["📊 Statistics","💸 Withdraw"],
+            ["👥 Referral","💰 Balance"],
+            ["💼 Set Wallet","📋 Tasks"],
+            ["🎁 Bonus","📜 Terms"]
+        ], resize_keyboard=True))
+
 # ================= HANDLER =================
 async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     uid = update.effective_user.id
     get_user(uid)
+
+    if not await force_join(update, context):
+        return
 
     if text == "📋 Tasks":
         await tasks(update, context)
@@ -169,7 +184,8 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ================= ADD HANDLERS =================
 app_bot.add_handler(CommandHandler("start", start))
 app_bot.add_handler(CallbackQueryHandler(check_tasks, pattern="check_tasks"))
-app_bot.add_handler(MessageHandler(filters.TEXT, handler))
+app_bot.add_handler(CallbackQueryHandler(check_join, pattern="check_join"))
+app_bot.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handler))
 
 # ================= WEBHOOK =================
 flask_app = Flask(__name__)
@@ -184,9 +200,7 @@ def webhook():
 def home():
     return "Bot is running"
 
-# set webhook
 app_bot.bot.set_webhook(f"{WEBHOOK_URL}/{TOKEN}")
 
-# run flask
 if __name__ == "__main__":
     flask_app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
