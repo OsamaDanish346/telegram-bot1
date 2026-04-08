@@ -19,7 +19,7 @@ BOT_USERNAME = os.getenv("BOT_USERNAME", "Afghan_reward_bot")
 DATABASE_URL = os.getenv("DATABASE_URL")
 WEBHOOK_URL = "https://worker-production-f5b3.up.railway.app"
 
-# چک
+# Important Check
 if not TOKEN:
     logger.error("❌ BOT_TOKEN missing!")
     raise ValueError("BOT_TOKEN is required")
@@ -28,7 +28,7 @@ if not DATABASE_URL:
     logger.error("❌ DATABASE_URL missing!")
     raise ValueError("DATABASE_URL is required")
 
-logger.info("✅ All environment variables loaded")
+logger.info("✅ All environment variables loaded successfully")
 
 # ================= DATABASE =================
 try:
