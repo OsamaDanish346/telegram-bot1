@@ -5,7 +5,7 @@ from telegram import *
 from telegram.ext import *
 from flask import Flask, request
 
-TOKEN = os.getenv("8778331918:AAE5uzWflufC_AkLDz62m4A80BsbIZoZtvI")
+TOKEN = getenv("8778331918:AAE5uzWflufC_AkLDz62m4A80BsbIZoZtvI")
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
 BOT_USERNAME = os.getenv("BOT_USERNAME")
 DATABASE_URL = os.getenv("DATABASE_URL")
